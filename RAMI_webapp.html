@@ -1,0 +1,1070 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>3D RAMI 4.0 Cube Visualization</title>
+  <style>
+    body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
+    #sidebar {
+      position: absolute; right: 0; top: 0; width: 300px; height: 100vh;
+      background: rgba(245, 245, 245, 0.98); box-shadow: -2px 0 8px #bbb;
+      padding: 24px 16px; z-index: 10;
+      display: flex; flex-direction: column; gap: 18px;
+      overflow-y: auto;
+    }
+    #sidebar h2 { margin-top: 0; font-size: 1.2em; }
+    #sidebar label { display: block; margin: 8px 0 4px; }
+    #sidebar input[type="range"] { width: 100%; }
+    #info { font-size: 0.95em; color: #333; margin-top: 12px; }
+    #canvas-container { width: calc(100vw - 300px); height: 100vh; }
+    .layer-slider { margin: 4px 0; }
+    .layer-name { display: inline-block; width: 120px; font-size: 0.9em; }
+    .selected { font-weight: bold; color: #1976d2; }
+    .opacity-buttons { display: flex; gap: 8px; align-items: center; }
+    .opacity-buttons button { padding: 8px 16px; font-size: 1em; cursor: pointer; background: #1976d2; color: white; border: none; border-radius: 4px; }
+    .opacity-buttons button:hover { background: #1565c0; }
+    .opacity-buttons span { font-weight: bold; min-width: 40px; text-align: center; }
+    
+    /* Occupied Fields Styles */
+    #occupied-fields-section { max-height: 250px; overflow-y: auto; }
+    #occupied-list { list-style: none; padding: 0; margin: 8px 0; }
+    .occupied-item { padding: 6px 8px; margin: 4px 0; background: white; border: 1px solid #ddd; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-size: 0.85em; }
+    .occupied-item:hover { background: #f5f5f5; }
+    .occupied-item.active { background: #e3f2fd; border-color: #1976d2; }
+    .occupied-item-text { flex: 1; }
+    .remove-btn { background: #f44336; color: white; border: none; padding: 2px 8px; border-radius: 3px; cursor: pointer; font-size: 0.85em; }
+    .remove-btn:hover { background: #d32f2f; }
+    
+    /* Field Info Styles */
+    #add-to-occupied-btn { width: 100%; padding: 8px; margin-top: 12px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+    #add-to-occupied-btn:hover { background: #45a049; }
+    #add-to-occupied-btn:disabled { background: #ccc; cursor: not-allowed; }
+    
+    /* Import/Export Buttons */
+    .io-buttons { display: flex; gap: 6px; margin-top: 8px; }
+    .io-btn { flex: 1; padding: 6px 8px; font-size: 0.85em; cursor: pointer; border: none; border-radius: 4px; font-weight: 500; }
+    .export-btn { background: #2196f3; color: white; }
+    .export-btn:hover { background: #1976d2; }
+    .import-btn { background: #ff9800; color: white; }
+    .import-btn:hover { background: #f57c00; }
+    .io-feedback { text-align: center; font-size: 0.8em; margin-top: 4px; padding: 4px; border-radius: 3px; }
+    .io-success { background: #c8e6c9; color: #2e7d32; }
+    .io-error { background: #ffcdd2; color: #c62828; }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  <div id="sidebar">
+    <h2>RAMI 4.0 Cube Controls</h2>
+    <div id="occupied-fields-section">
+      <label>Occupied Fields:</label>
+      <ul id="occupied-list"></ul>
+      <div class="io-buttons">
+        <button class="io-btn export-btn" id="export-btn">📋 Export</button>
+        <button class="io-btn import-btn" id="import-btn">📥 Import</button>
+      </div>
+      <div id="io-feedback"></div>
+    </div>
+    <div>
+      <label>Layer Transparency:</label>
+      <div id="layer-controls"></div>
+    </div>
+    <div>
+      <label>Overall Transparency:</label>
+      <div class="opacity-buttons">
+        <button id="opacity-down">▼</button>
+        <span id="opacity-value">50%</span>
+        <button id="opacity-up">▲</button>
+      </div>
+    </div>
+    <div id="info">
+      <strong>Instructions:</strong><br>
+      - Rotate: Left Mouse<br>
+      - Zoom: Mouse Wheel<br>
+      - Pan: Right Mouse<br>
+      - Click a field to select/add<br>
+      <hr>
+      <div id="field-info">No field selected.</div>
+    </div>
+  </div>
+  
+  <!-- Three.js CDN -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.153.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.153.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    
+    // RAMI 4.0 Cube Parameters
+    const LAYERS = [
+      { name: "Asset", color: 0x4caf50 },
+      { name: "Integration", color: 0x2196f3 },
+      { name: "Communication", color: 0xff9800 },
+      { name: "Information", color: 0x9c27b0 },
+      { name: "Functional", color: 0xf44336 },
+      { name: "Business", color: 0x607d8b }
+    ];
+    const HIERARCHY_LEVELS = ["Product", "Field device", "Control Device", "Station", "Work Centers", "Enterprise", "Connected World"];
+    const LIFE_CYCLE_PHASES = ["Maintenance/Usage (Instance)", "Production", "Maintenance/Usage (Type)", "Development"];
+    const LIFE_CYCLE = {"Type": ["Development", "Maintenance & Usage"], "Instance": ["Production", "Maintenance & Usage"]};
+    const GRID_X = 4; // Life cycle phases (4 phases: 2 Type + 2 Instance) - X-axis
+    const GRID_Z = 7; // Hierarchy levels (all 7) - Z-axis
+    const LAYER_HEIGHT = 0.25;
+    const CUBE_SIZE = 4.5;
+
+    // Three.js Setup
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf0f0f0);
+    const camera = new THREE.PerspectiveCamera(40, container.offsetWidth / container.offsetHeight, 0.1, 100);
+    camera.position.set(-5, 5, -6);
+    camera.layers.enableAll(); // Camera renders all layers
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(container.offsetWidth, container.offsetHeight);
+    container.appendChild(renderer.domElement);
+
+    // Controls
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    // Lighting
+    scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.7);
+    dirLight.position.set(5, 10, 7);
+    scene.add(dirLight);
+
+    // Add Floor Grid aligned with cube dimensions (4x7)
+    const gridGroup = new THREE.Group();
+    const gridMaterial = new THREE.LineBasicMaterial({ 
+      color: 0x666666, 
+      transparent: true, 
+      opacity: 0.5 
+    });
+    
+    const gridMaterialBold = new THREE.LineBasicMaterial({ 
+      color: 0x444444, 
+      transparent: true, 
+      opacity: 0.9
+    });
+    
+    // Calculate grid bounds based on field positions
+    const lifecycleSpacing = 1.2; // Larger spacing between lifecycle phases
+    const hierarchySpacing = 0.7; // Standard spacing between hierarchy levels
+    const gridExtension = 0.3; // Small extension for visibility
+    
+    // Calculate field positions
+    const lifecyclePositions = [];
+    for (let x = 0; x < GRID_X; x++) {
+      lifecyclePositions.push((x - (GRID_X - 1) / 2) * lifecycleSpacing);
+    }
+    
+    const hierarchyPositions = [];
+    for (let z = 0; z < GRID_Z; z++) {
+      hierarchyPositions.push((z - (GRID_Z - 1) / 2) * hierarchySpacing);
+    }
+    
+    // Create X-direction separator lines (between hierarchy levels)
+    for (let z = 0; z <= GRID_Z; z++) {
+      const zPos = z === 0 ? hierarchyPositions[0] - hierarchySpacing/2 : 
+                    z === GRID_Z ? hierarchyPositions[GRID_Z-1] + hierarchySpacing/2 :
+                    (hierarchyPositions[z-1] + hierarchyPositions[z]) / 2;
+      
+      const xStart = lifecyclePositions[0] - lifecycleSpacing/2 - 4*gridExtension;
+      const xEnd = lifecyclePositions[GRID_X-1] + lifecycleSpacing/2 + 4*gridExtension;
+      
+      const geometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(xStart, -0.2, zPos),
+        new THREE.Vector3(xEnd, -0.2, zPos)
+      ]);
+      const line = new THREE.Line(geometry, gridMaterial);
+      gridGroup.add(line);
+    }
+    
+    // Create Z-direction separator lines (between lifecycle phases)
+    for (let x = 0; x <= GRID_X; x++) {
+      const xPos = x === 0 ? lifecyclePositions[0] - lifecycleSpacing/2 : 
+                    x === GRID_X ? lifecyclePositions[GRID_X-1] + lifecycleSpacing/2 :
+                    (lifecyclePositions[x-1] + lifecyclePositions[x]) / 2;
+      
+      const zStart = hierarchyPositions[0] - hierarchySpacing/2 - gridExtension;
+      const zEnd = hierarchyPositions[GRID_Z-1] + hierarchySpacing/2 + gridExtension;
+      
+      // Use bold line for Type/Instance separator (between phase 2 and 3)
+      const useBold = (x === 2);
+      const lineMaterial = useBold ? gridMaterialBold : gridMaterial;
+      
+      const geometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(xPos, -0.2, zStart),
+        new THREE.Vector3(xPos, -0.2, zEnd)
+      ]);
+      const line = new THREE.Line(geometry, lineMaterial);
+      gridGroup.add(line);
+    }
+    
+    scene.add(gridGroup);
+
+    // Layer Groups
+    const layerGroups = [];
+    const fieldMeshes = [];
+    const connectors = [];
+    const occupiedFieldLines = new Map(); // Map to store vertical lines for occupied fields
+    const annotationSprites = []; // Array to store selectable annotations
+
+    // Layer Transparency
+    const layerOpacities = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5];
+    let overallOpacity = 0.5;
+
+    // Occupied Fields Management
+    const occupiedFields = [];
+    let selectedOccupiedIndex = -1;
+
+    // Create vertical line for an occupied field
+    function createOccupiedFieldLine(lifecycleIndex, hierarchyIndex) {
+      const key = `${lifecycleIndex}-${hierarchyIndex}`;
+      
+      // Remove existing line if present
+      if (occupiedFieldLines.has(key)) {
+        const oldLine = occupiedFieldLines.get(key);
+        scene.remove(oldLine);
+        occupiedFieldLines.delete(key);
+      }
+      
+      // Create vertical line through all layers
+      const xPos = (lifecycleIndex - (GRID_X - 1) / 2) * lifecycleSpacing;
+      const zPos = (hierarchyIndex - (GRID_Z - 1) / 2) * hierarchySpacing;
+      const startY = 0;
+      const endY = (LAYERS.length - 1) * (LAYER_HEIGHT + 0.05) + LAYER_HEIGHT;
+      
+      const geometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(xPos, startY, zPos),
+        new THREE.Vector3(xPos, endY, zPos)
+      ]);
+      const material = new THREE.LineBasicMaterial({ 
+        color: 0x4caf50, 
+        transparent: true, 
+        opacity: 0.8,
+        linewidth: 2,
+        depthTest: false // Always visible
+      });
+      const line = new THREE.Line(geometry, material);
+      line.renderOrder = 997; // Behind occupied fields but in front of everything else
+      
+      occupiedFieldLines.set(key, line);
+      scene.add(line);
+    }
+    
+    // Remove vertical line for a field
+    function removeOccupiedFieldLine(lifecycleIndex, hierarchyIndex) {
+      const key = `${lifecycleIndex}-${hierarchyIndex}`;
+      if (occupiedFieldLines.has(key)) {
+        const line = occupiedFieldLines.get(key);
+        scene.remove(line);
+        occupiedFieldLines.delete(key);
+      }
+    }
+
+    // Create Layers
+    for (let l = 0; l < LAYERS.length; l++) {
+      const group = new THREE.Group();
+      // Layer "slice"
+      const layerGeo = new THREE.BoxGeometry(CUBE_SIZE, LAYER_HEIGHT, CUBE_SIZE);
+      const layerMat = new THREE.MeshPhongMaterial({
+        color: LAYERS[l].color,
+        transparent: true,
+        opacity: layerOpacities[l],
+        shininess: 60
+      });
+      const layerMesh = new THREE.Mesh(layerGeo, layerMat);
+      layerMesh.position.y = l * (LAYER_HEIGHT + 0.05);
+      group.add(layerMesh);
+
+      // Internal Fields (as small cubes)
+      for (let x = 0; x < GRID_X; x++) {
+        for (let z = 0; z < GRID_Z; z++) {
+          const fieldGeo = new THREE.BoxGeometry(0.35, 0.13, 0.35);
+          const fieldMat = new THREE.MeshPhongMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.3,
+            emissive: 0x000000
+          });
+          const fieldMesh = new THREE.Mesh(fieldGeo, fieldMat);
+          fieldMesh.position.set(
+            (x - (GRID_X - 1) / 2) * lifecycleSpacing,
+            l * (LAYER_HEIGHT + 0.05),
+            (z - (GRID_Z - 1) / 2) * hierarchySpacing
+          );
+          fieldMesh.userData = {
+            layer: l,
+            layerName: LAYERS[l].name,
+            lifecycleIndex: x,
+            hierarchyIndex: z,
+            selected: false
+          };
+          fieldMesh.layers.set(1); // Start on layer 1 (non-raycastable)
+          fieldMeshes.push(fieldMesh);
+          group.add(fieldMesh);
+        }
+      }
+      layerGroups.push(group);
+      scene.add(group);
+    }
+
+    // Create Vertical Connectors
+    for (let l = 0; l < LAYERS.length - 1; l++) {
+      for (let x = 0; x < GRID_X; x++) {
+        for (let z = 0; z < GRID_Z; z++) {
+          const startY = l * (LAYER_HEIGHT + 0.05);
+          const endY = (l + 1) * (LAYER_HEIGHT + 0.05);
+          const geometry = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3((x - (GRID_X - 1) / 2) * lifecycleSpacing, startY, (z - (GRID_Z - 1) / 2) * hierarchySpacing),
+            new THREE.Vector3((x - (GRID_X - 1) / 2) * lifecycleSpacing, endY, (z - (GRID_Z - 1) / 2) * hierarchySpacing)
+          ]);
+          const material = new THREE.LineBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.5 });
+          const line = new THREE.Line(geometry, material);
+          connectors.push(line);
+          scene.add(line);
+        }
+      }
+    }
+
+    // Helper function to create text sprite
+    function createTextSprite(text, color = '#000000', fontSize = 32) {
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      canvas.width = 512;
+      canvas.height = 128;
+      
+      context.fillStyle = 'rgba(255, 255, 255, 0)';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      
+      context.font = `${fontSize}px Arial`;
+      context.fillStyle = color;
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.fillText(text, canvas.width / 2, canvas.height / 2);
+      
+      const texture = new THREE.CanvasTexture(canvas);
+      const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+      const sprite = new THREE.Sprite(material);
+      sprite.scale.set(2, 0.5, 1);
+      return sprite;
+    }
+
+    // Annotation descriptions
+    const LIFECYCLE_DESCRIPTIONS = [
+      "Maintenance and Usage phase for product instances - covers operational maintenance and usage of manufactured products",
+      "Production phase - covers the manufacturing and assembly of product instances",
+      "Maintenance and Usage phase for product types - covers operational procedures and usage guidelines for product designs",
+      "Development phase - covers research, design, and engineering of product types"
+    ];
+    
+    const HIERARCHY_DESCRIPTIONS = [
+      "Product - Individual manufactured item or product type specification",
+      "Field Device - Sensors, actuators, and field-level devices",
+      "Control Device - PLCs, controllers, and control-level systems",
+      "Station - Work cells, production lines, or station-level systems",
+      "Work Centers - Shop floor areas or work center management systems",
+      "Enterprise - Plant-level or company-wide systems",
+      "Connected World - External systems, supply chain, and inter-enterprise connections"
+    ];
+    
+    const LAYER_DESCRIPTIONS = [
+      "Asset - Physical assets, hardware, and equipment",
+      "Integration - Integration technologies and interfaces",
+      "Communication - Communication protocols and networks",
+      "Information - Data models, information exchange, and semantics",
+      "Functional - Functions, processes, and business logic",
+      "Business - Business processes, workflows, and enterprise functions"
+    ];
+
+    // Add Life Cycle Labels (X-axis) - all 4 phases
+    for (let x = 0; x < GRID_X; x++) {
+      const label = createTextSprite(LIFE_CYCLE_PHASES[x], '#333333', 24);
+      label.position.set(
+        (x - (GRID_X - 1) / 2) * lifecycleSpacing,
+        -0.3,
+        -CUBE_SIZE / 2 - 0.8
+      );
+      label.scale.set(2.0, 0.4, 1);
+      label.userData = {
+        type: 'lifecycle',
+        name: LIFE_CYCLE_PHASES[x],
+        description: LIFECYCLE_DESCRIPTIONS[x]
+      };
+      annotationSprites.push(label);
+      scene.add(label);
+    }
+    
+    // Add Type/Instance grouping labels
+    const typeLabel = createTextSprite('Type', '#1976d2', 32);
+    typeLabel.position.set(1.2, 0.25, -CUBE_SIZE / 2 - 1.3);
+    typeLabel.scale.set(1.5, 0.4, 1);
+    typeLabel.userData = {
+      type: 'group',
+      name: 'Type',
+      description: 'Type refers to product designs, specifications, and development artifacts - the blueprints and procedures before manufacturing'
+    };
+    annotationSprites.push(typeLabel);
+    scene.add(typeLabel);
+    
+    const instanceLabel = createTextSprite('Instance', '#1976d2', 32);
+    instanceLabel.position.set(-1.2, 0.25, -CUBE_SIZE / 2 - 1.3);
+    instanceLabel.scale.set(1.5, 0.4, 1);
+    instanceLabel.userData = {
+      type: 'group',
+      name: 'Instance',
+      description: 'Instance refers to manufactured products and their operational lifecycle - the actual physical items and their usage'
+    };
+    annotationSprites.push(instanceLabel);
+    scene.add(instanceLabel);
+
+    // Add axis title for Life Cycle
+    const lifecycleTitle = createTextSprite('Life Cycle & Value Stream', '#1976d2', 36);
+    lifecycleTitle.position.set(0, -0.8, -CUBE_SIZE / 2 - 1.6);
+    lifecycleTitle.scale.set(3.5, 0.75, 1);
+    scene.add(lifecycleTitle);
+
+    const lifecycleSubtitle = createTextSprite('IEC 62890', '#666666', 28);
+    lifecycleSubtitle.position.set(0, -1.1, -CUBE_SIZE / 2 - 1.6);
+    lifecycleSubtitle.scale.set(2, 0.6, 1);
+    scene.add(lifecycleSubtitle);
+
+    // Add Hierarchy Level Labels (Z-axis) - on left side
+    for (let z = 0; z < GRID_Z; z++) {
+      const label = createTextSprite(HIERARCHY_LEVELS[z], '#333333', 24);
+      label.position.set(
+        -CUBE_SIZE / 2 - 1.3,
+        0.0,
+        (z - (GRID_Z - 1) / 2) * hierarchySpacing
+      );
+      label.scale.set(1.6, 0.4, 1);
+      label.userData = {
+        type: 'hierarchy',
+        name: HIERARCHY_LEVELS[z],
+        description: HIERARCHY_DESCRIPTIONS[z]
+      };
+      annotationSprites.push(label);
+      scene.add(label);
+    }
+
+    // Add axis title for Hierarchy
+    const hierarchyTitle = createTextSprite('Hierarchy Levels', '#1976d2', 36);
+    hierarchyTitle.position.set(-CUBE_SIZE / 2 - 1.5, -0.8, 0);
+    hierarchyTitle.scale.set(3, 0.75, 1);
+    scene.add(hierarchyTitle);
+
+    const hierarchySubtitle = createTextSprite('IEC 62264 / IEC 61512', '#666666', 28);
+    hierarchySubtitle.position.set(-CUBE_SIZE / 2 - 1.5, -1.1, 0);
+    hierarchySubtitle.scale.set(2.5, 0.6, 1);
+    scene.add(hierarchySubtitle);
+
+    // Add Layers Label (Y-axis) - moved to right-front edge
+    const layersTitle = createTextSprite('Layers', '#1976d2', 36);
+    layersTitle.position.set(CUBE_SIZE / 2 + 0.8, LAYERS.length * (LAYER_HEIGHT + 0.35) / 2, -CUBE_SIZE / 2 - 0.8);
+    layersTitle.scale.set(2, 0.5, 1);
+    scene.add(layersTitle);
+
+    // Add individual layer name labels on the right-front edge
+    LAYERS.forEach((layer, idx) => {
+      const layerLabel = createTextSprite(layer.name, '#333333', 26);
+      layerLabel.position.set(
+        CUBE_SIZE / 2 + 0.8,
+        idx * (LAYER_HEIGHT + 0.05),
+        -CUBE_SIZE / 2 - 0.8
+      );
+      layerLabel.scale.set(1.5, 0.4, 1);
+      layerLabel.userData = {
+        type: 'layer',
+        name: layer.name,
+        description: LAYER_DESCRIPTIONS[idx]
+      };
+      annotationSprites.push(layerLabel);
+      scene.add(layerLabel);
+    });
+
+    // Layer Controls in Sidebar
+    const layerControls = document.getElementById('layer-controls');
+    LAYERS.forEach((layer, idx) => {
+      const div = document.createElement('div');
+      div.className = 'layer-slider';
+      div.innerHTML = `<span class="layer-name">${layer.name}:</span><input type="range" class="layer-opacity" data-layer="${idx}" min="0" max="1" step="0.05" value="0.5">`;
+      layerControls.appendChild(div);
+    });
+
+    // Layer Transparency Event
+    layerControls.addEventListener('input', (e) => {
+      if (e.target.classList.contains('layer-opacity')) {
+        const idx = +e.target.dataset.layer;
+        const opacity = parseFloat(e.target.value);
+        layerOpacities[idx] = opacity;
+        layerGroups[idx].children[0].material.opacity = opacity;
+      }
+    });
+
+    // Overall Opacity Control
+    function updateOverallOpacity(change) {
+      overallOpacity = Math.max(0, Math.min(1, overallOpacity + change));
+      document.getElementById('opacity-value').textContent = Math.round(overallOpacity * 100) + '%';
+      layerGroups.forEach((group, l) => {
+        layerOpacities[l] = Math.max(0, Math.min(1, layerOpacities[l] + change));
+        group.children[0].material.opacity = layerOpacities[l];
+        const slider = document.querySelector(`input[data-layer="${l}"]`);
+        if (slider) slider.value = layerOpacities[l];
+      });
+    }
+    document.getElementById('opacity-up').addEventListener('click', () => updateOverallOpacity(0.1));
+    document.getElementById('opacity-down').addEventListener('click', () => updateOverallOpacity(-0.1));
+
+    // Raycaster for Field Selection
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    let selectedField = null;
+
+    // Helper function to find field mesh by indices
+    function findFieldMesh(layerIndex, lifecycleIndex, hierarchyIndex) {
+      return fieldMeshes.find(mesh => 
+        mesh.userData.layer === layerIndex &&
+        mesh.userData.lifecycleIndex === lifecycleIndex &&
+        mesh.userData.hierarchyIndex === hierarchyIndex
+      );
+    }
+
+    // Check if a field is occupied
+    function isFieldOccupied(layerIndex, lifecycleIndex, hierarchyIndex) {
+      return occupiedFields.some(f => 
+        f.layer === layerIndex &&
+        f.lifecycleIndex === lifecycleIndex &&
+        f.hierarchyIndex === hierarchyIndex
+      );
+    }
+
+    // Update field visual based on occupation status
+    function updateFieldVisual(field) {
+      if (!field) return;
+      
+      const isOccupied = isFieldOccupied(
+        field.userData.layer,
+        field.userData.lifecycleIndex,
+        field.userData.hierarchyIndex
+      );
+      
+      if (field.userData.selected) {
+        // Selected state (blue) - always visible and raycastable
+        field.material.color.set(0x1976d2);
+        field.material.emissive.set(0x1976d2);
+        field.material.opacity = 0.95;
+        field.material.depthTest = false;
+        field.material.depthWrite = false;
+        field.renderOrder = 999;
+        field.layers.set(0); // Layer 0 = raycastable
+      } else if (isOccupied) {
+        // Occupied state (green/visible) - always visible and raycastable
+        field.material.color.set(0x4caf50);
+        field.material.emissive.set(0x2e7d32);
+        field.material.opacity = 0.9;
+        field.material.depthTest = false;
+        field.material.depthWrite = false;
+        field.renderOrder = 998;
+        field.layers.set(0); // Layer 0 = raycastable
+      } else {
+        // Empty state (white/transparent) - normal depth testing, not raycastable
+        field.material.color.set(0xffffff);
+        field.material.emissive.set(0x000000);
+        field.material.opacity = 0.3;
+        field.material.depthTest = true;
+        field.material.depthWrite = true;
+        field.renderOrder = 0;
+        field.layers.set(1); // Layer 1 = not raycastable (won't block clicks)
+      }
+      
+      field.material.needsUpdate = true;
+    }
+
+    // Update all field visuals
+    function updateAllFieldVisuals() {
+      fieldMeshes.forEach(mesh => {
+        updateFieldVisual(mesh);
+      });
+    }
+
+    // Update field highlighting
+    function updateFieldHighlight(field, isHighlighted) {
+      if (field) {
+        field.userData.selected = isHighlighted;
+        updateFieldVisual(field);
+      }
+    }
+
+    // Render occupied fields list
+    function renderOccupiedList() {
+      const list = document.getElementById('occupied-list');
+      list.innerHTML = '';
+      
+      occupiedFields.forEach((field, index) => {
+        const li = document.createElement('li');
+        li.className = 'occupied-item';
+        if (index === selectedOccupiedIndex) li.classList.add('active');
+        
+        const text = document.createElement('span');
+        text.className = 'occupied-item-text';
+        text.textContent = `${field.layerName} - ${field.hierarchyLevel} - ${field.lifecyclePhase}`;
+        
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'remove-btn';
+        removeBtn.textContent = '×';
+        removeBtn.onclick = (e) => {
+          e.stopPropagation();
+          removeOccupiedField(index);
+        };
+        
+        li.appendChild(text);
+        li.appendChild(removeBtn);
+        li.onclick = () => selectOccupiedField(index);
+        list.appendChild(li);
+      });
+    }
+
+    // Export occupied fields to clipboard
+    function exportOccupiedFields() {
+      const exportData = occupiedFields.map(field => ({
+        layer: field.layerName,
+        hierarchy: field.hierarchyLevel,
+        lifecycle: field.lifecyclePhase
+      }));
+      
+      const jsonString = JSON.stringify(exportData, null, 2);
+      
+      navigator.clipboard.writeText(jsonString).then(() => {
+        showIOFeedback('Exported to clipboard!', 'success');
+      }).catch(err => {
+        showIOFeedback('Failed to export: ' + err.message, 'error');
+      });
+    }
+
+    // Import occupied fields from clipboard
+    function importOccupiedFields() {
+      navigator.clipboard.readText().then(text => {
+        try {
+          const importData = JSON.parse(text);
+          
+          if (!Array.isArray(importData)) {
+            throw new Error('Invalid format: expected an array');
+          }
+          
+          // Clear existing occupied fields
+          while (occupiedFields.length > 0) {
+            removeOccupiedField(0);
+          }
+          
+          // Import new fields
+          let importedCount = 0;
+          let skippedCount = 0;
+          
+          importData.forEach(item => {
+            // Find the layer index
+            const layerIndex = LAYERS.findIndex(l => l.name === item.layer);
+            if (layerIndex === -1) {
+              skippedCount++;
+              return;
+            }
+            
+            // Find hierarchy index
+            const hierarchyIndex = HIERARCHY_LEVELS.findIndex(h => h === item.hierarchy);
+            if (hierarchyIndex === -1) {
+              skippedCount++;
+              return;
+            }
+            
+            // Find lifecycle index
+            const lifecycleIndex = LIFE_CYCLE_PHASES.findIndex(p => p === item.lifecycle);
+            if (lifecycleIndex === -1) {
+              skippedCount++;
+              return;
+            }
+            
+            // Add the field
+            occupiedFields.push({
+              layer: layerIndex,
+              layerName: item.layer,
+              lifecycleIndex: lifecycleIndex,
+              lifecyclePhase: item.lifecycle,
+              hierarchyIndex: hierarchyIndex,
+              hierarchyLevel: item.hierarchy
+            });
+            
+            // Find and update the mesh
+            const mesh = findFieldMesh(layerIndex, lifecycleIndex, hierarchyIndex);
+            if (mesh) {
+              updateFieldVisual(mesh);
+            }
+            
+            // Create vertical line
+            createOccupiedFieldLine(lifecycleIndex, hierarchyIndex);
+            
+            importedCount++;
+          });
+          
+          renderOccupiedList();
+          
+          let message = `Imported ${importedCount} field(s)`;
+          if (skippedCount > 0) {
+            message += ` (${skippedCount} skipped)`;
+          }
+          showIOFeedback(message, 'success');
+          
+        } catch (err) {
+          showIOFeedback('Import failed: ' + err.message, 'error');
+        }
+      }).catch(err => {
+        showIOFeedback('Failed to read clipboard: ' + err.message, 'error');
+      });
+    }
+
+    // Show import/export feedback
+    function showIOFeedback(message, type) {
+      const feedback = document.getElementById('io-feedback');
+      feedback.textContent = message;
+      feedback.className = `io-feedback io-${type}`;
+      
+      setTimeout(() => {
+        feedback.textContent = '';
+        feedback.className = '';
+      }, 3000);
+    }
+
+    // Add event listeners for import/export buttons
+    document.getElementById('export-btn').addEventListener('click', exportOccupiedFields);
+    document.getElementById('import-btn').addEventListener('click', importOccupiedFields);
+
+    // Select occupied field from list
+    function selectOccupiedField(index) {
+      // Clear previous selection
+      if (selectedField) {
+        updateFieldHighlight(selectedField, false);
+      }
+      
+      selectedOccupiedIndex = index;
+      const field = occupiedFields[index];
+      
+      // Find and highlight the mesh
+      selectedField = findFieldMesh(field.layer, field.lifecycleIndex, field.hierarchyIndex);
+      if (selectedField) {
+        updateFieldHighlight(selectedField, true);
+        selectedField.userData.selected = true;
+        showFieldInfo(selectedField.userData);
+      }
+      
+      renderOccupiedList();
+    }
+
+    // Remove occupied field
+    function removeOccupiedField(index) {
+      const field = occupiedFields[index];
+      
+      // Clear highlight if this field is selected
+      if (index === selectedOccupiedIndex) {
+        const mesh = findFieldMesh(field.layer, field.lifecycleIndex, field.hierarchyIndex);
+        if (mesh) {
+          updateFieldHighlight(mesh, false);
+          mesh.userData.selected = false;
+        }
+        selectedField = null;
+        selectedOccupiedIndex = -1;
+        showFieldInfo(null);
+      } else if (index < selectedOccupiedIndex) {
+        selectedOccupiedIndex--;
+      }
+      
+      // Update visual before removing
+      const mesh = findFieldMesh(field.layer, field.lifecycleIndex, field.hierarchyIndex);
+      
+      // Remove vertical line
+      removeOccupiedFieldLine(field.lifecycleIndex, field.hierarchyIndex);
+      
+      occupiedFields.splice(index, 1);
+      
+      // Update the field visual after removal
+      if (mesh) {
+        updateFieldVisual(mesh);
+      }
+      
+      renderOccupiedList();
+      
+      // Refresh field info if this field was selected
+      if (selectedField && selectedField === mesh) {
+        showFieldInfo(selectedField.userData);
+      }
+    }
+
+    function onMouseClick(event) {
+      // Ignore clicks on sidebar
+      if (event.clientX > window.innerWidth - 300) return;
+      mouse.x = (event.clientX / container.offsetWidth) * 2 - 1;
+      mouse.y = - (event.clientY / container.offsetHeight) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      
+      // Check for annotation clicks first (higher priority)
+      raycaster.layers.enableAll();
+      const annotationIntersects = raycaster.intersectObjects(annotationSprites);
+      
+      if (annotationIntersects.length > 0) {
+        // Annotation clicked
+        if (selectedField) {
+          updateFieldHighlight(selectedField, false);
+          selectedField.userData.selected = false;
+        }
+        selectedField = null;
+        selectedOccupiedIndex = -1;
+        showFieldInfo(annotationIntersects[0].object.userData);
+        renderOccupiedList();
+        return;
+      }
+      
+      // Check for field clicks
+      // First, try to raycast only occupied fields (layer 0)
+      raycaster.layers.set(0);
+      let intersects = raycaster.intersectObjects(fieldMeshes);
+      
+      // If no occupied field hit, check all layers to get visible non-occupied fields
+      if (intersects.length === 0) {
+        raycaster.layers.enableAll();
+        intersects = raycaster.intersectObjects(fieldMeshes);
+      }
+      
+      if (intersects.length > 0) {
+        if (selectedField) {
+          updateFieldHighlight(selectedField, false);
+          selectedField.userData.selected = false;
+        }
+        selectedField = intersects[0].object;
+        updateFieldHighlight(selectedField, true);
+        selectedField.userData.selected = true;
+        showFieldInfo(selectedField.userData);
+        
+        // Check if clicked field is in occupied list
+        const occupiedIndex = occupiedFields.findIndex(f => 
+          f.layer === selectedField.userData.layer &&
+          f.lifecycleIndex === selectedField.userData.lifecycleIndex &&
+          f.hierarchyIndex === selectedField.userData.hierarchyIndex
+        );
+        selectedOccupiedIndex = occupiedIndex;
+        renderOccupiedList();
+      } else {
+        if (selectedField) {
+          updateFieldHighlight(selectedField, false);
+          selectedField.userData.selected = false;
+        }
+        selectedField = null;
+        selectedOccupiedIndex = -1;
+        showFieldInfo(null);
+        renderOccupiedList();
+      }
+    }
+    renderer.domElement.addEventListener('click', onMouseClick);
+
+    // Keyboard Navigation
+    document.addEventListener('keydown', (event) => {
+      if (!selectedField) return;
+      
+      // Enter key - add to occupied
+      if (event.key === 'Enter') {
+        const isOccupied = isFieldOccupied(
+          selectedField.userData.layer,
+          selectedField.userData.lifecycleIndex,
+          selectedField.userData.hierarchyIndex
+        );
+        if (!isOccupied) {
+          addSelectedFieldToOccupied();
+        }
+        return;
+      }
+      
+      // Arrow key navigation
+      if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+      
+      event.preventDefault();
+      
+      const currentLayer = selectedField.userData.layer;
+      const currentLifecycle = selectedField.userData.lifecycleIndex;
+      const currentHierarchy = selectedField.userData.hierarchyIndex;
+      
+      // Get camera direction to determine navigation mapping
+      const cameraDir = new THREE.Vector3();
+      camera.getWorldDirection(cameraDir);
+      
+      // Determine primary axis (which way camera is facing)
+      const absX = Math.abs(cameraDir.x);
+      const absZ = Math.abs(cameraDir.z);
+      
+      let newLayer = currentLayer;
+      let newLifecycle = currentLifecycle;
+      let newHierarchy = currentHierarchy;
+      
+      // Map arrow keys based on camera orientation
+      if (absX > absZ) {
+        // Camera looking along X-axis (lifecycle axis)
+        if (event.key === 'ArrowUp') newLayer = Math.min(currentLayer + 1, LAYERS.length - 1);
+        if (event.key === 'ArrowDown') newLayer = Math.max(currentLayer - 1, 0);
+        if (event.key === 'ArrowLeft') {
+          if (cameraDir.x > 0) newHierarchy = Math.max(currentHierarchy - 1, 0);
+          else newHierarchy = Math.min(currentHierarchy + 1, GRID_Z - 1);
+        }
+        if (event.key === 'ArrowRight') {
+          if (cameraDir.x > 0) newHierarchy = Math.min(currentHierarchy + 1, GRID_Z - 1);
+          else newHierarchy = Math.max(currentHierarchy - 1, 0);
+        }
+      } else {
+        // Camera looking along Z-axis (hierarchy axis)
+        if (event.key === 'ArrowUp') newLayer = Math.min(currentLayer + 1, LAYERS.length - 1);
+        if (event.key === 'ArrowDown') newLayer = Math.max(currentLayer - 1, 0);
+        if (event.key === 'ArrowLeft') {
+          if (cameraDir.z > 0) newLifecycle = Math.min(currentLifecycle + 1, GRID_X - 1);
+          else newLifecycle = Math.max(currentLifecycle - 1, 0);
+        }
+        if (event.key === 'ArrowRight') {
+          if (cameraDir.z > 0) newLifecycle = Math.max(currentLifecycle - 1, 0);
+          else newLifecycle = Math.min(currentLifecycle + 1, GRID_X - 1);
+        }
+      }
+      
+      // Find and select the new field
+      const newField = findFieldMesh(newLayer, newLifecycle, newHierarchy);
+      if (newField && newField !== selectedField) {
+        updateFieldHighlight(selectedField, false);
+        selectedField.userData.selected = false;
+        
+        selectedField = newField;
+        updateFieldHighlight(selectedField, true);
+        selectedField.userData.selected = true;
+        showFieldInfo(selectedField.userData);
+        
+        // Check if new field is in occupied list
+        const occupiedIndex = occupiedFields.findIndex(f => 
+          f.layer === newLayer &&
+          f.lifecycleIndex === newLifecycle &&
+          f.hierarchyIndex === newHierarchy
+        );
+        selectedOccupiedIndex = occupiedIndex;
+        renderOccupiedList();
+      }
+    });
+
+    // Show Field Info in Sidebar
+    function showFieldInfo(data) {
+      const info = document.getElementById('field-info');
+      if (!data) {
+        info.innerHTML = "No field selected.";
+      } else if (data.type) {
+        // Annotation selected
+        const typeLabel = data.type.charAt(0).toUpperCase() + data.type.slice(1);
+        info.innerHTML = `
+          <div class="selected">Selected ${typeLabel}</div>
+          <b>Name:</b> ${data.name}<br><br>
+          <b>Description:</b><br>
+          <div style="margin-top: 8px; font-size: 13px; line-height: 1.4;">${data.description}</div>
+        `;
+      } else {
+        // Field selected
+        const hierarchyLevel = HIERARCHY_LEVELS[data.hierarchyIndex];
+        const lifecyclePhase = LIFE_CYCLE_PHASES[data.lifecycleIndex];
+        const lifecycleType = data.lifecycleIndex < 2 ? "Instance" : "Type";
+        
+        const isOccupied = isFieldOccupied(data.layer, data.lifecycleIndex, data.hierarchyIndex);
+        
+        info.innerHTML = `
+          <div class="selected">Selected Field</div>
+          <b>Layer:</b> ${data.layerName}<br>
+          <b>Hierarchy Level:</b> ${hierarchyLevel}<br>
+          <b>Life Cycle Type:</b> ${lifecycleType}<br>
+          <b>Phase:</b> ${lifecyclePhase}<br>
+          <button id="add-to-occupied-btn" ${isOccupied ? 'disabled' : ''}>
+            ${isOccupied ? 'Already Occupied' : '+ Add to Occupied (Enter)'}
+          </button>
+          <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid #ddd;">
+            <div style="margin-bottom: 10px;">
+              <b style="color: #1976d2;">Layer:</b> ${data.layerName}<br>
+              <div style="font-size: 12px; color: #666; margin-top: 4px; line-height: 1.3;">${LAYER_DESCRIPTIONS[data.layer]}</div>
+            </div>
+            <div style="margin-bottom: 10px;">
+              <b style="color: #1976d2;">Life Cycle:</b> ${lifecyclePhase}<br>
+              <div style="font-size: 12px; color: #666; margin-top: 4px; line-height: 1.3;">${LIFECYCLE_DESCRIPTIONS[data.lifecycleIndex]}</div>
+            </div>
+            <div style="margin-bottom: 10px;">
+              <b style="color: #1976d2;">Hierarchy:</b> ${hierarchyLevel}<br>
+              <div style="font-size: 12px; color: #666; margin-top: 4px; line-height: 1.3;">${HIERARCHY_DESCRIPTIONS[data.hierarchyIndex]}</div>
+            </div>
+          </div>
+        `;
+        
+        // Add event listener to the button
+        if (!isOccupied) {
+          document.getElementById('add-to-occupied-btn').addEventListener('click', () => {
+            addSelectedFieldToOccupied();
+          });
+        }
+      }
+    }
+    
+    // Add selected field to occupied list
+    function addSelectedFieldToOccupied() {
+      if (!selectedField) return;
+      
+      const data = selectedField.userData;
+      const exists = occupiedFields.some(f => 
+        f.layer === data.layer && 
+        f.lifecycleIndex === data.lifecycleIndex && 
+        f.hierarchyIndex === data.hierarchyIndex
+      );
+      
+      if (!exists) {
+        occupiedFields.push({
+          layer: data.layer,
+          layerName: data.layerName,
+          lifecycleIndex: data.lifecycleIndex,
+          lifecyclePhase: LIFE_CYCLE_PHASES[data.lifecycleIndex],
+          hierarchyIndex: data.hierarchyIndex,
+          hierarchyLevel: HIERARCHY_LEVELS[data.hierarchyIndex]
+        });
+        
+        // Update the field visual
+        updateFieldVisual(selectedField);
+        
+        // Create vertical line for this occupied field
+        createOccupiedFieldLine(data.lifecycleIndex, data.hierarchyIndex);
+        
+        renderOccupiedList();
+        
+        // Refresh field info to show "Already Occupied"
+        showFieldInfo(data);
+      }
+    }
+
+    // Responsive Resize
+    window.addEventListener('resize', () => {
+      camera.aspect = container.offsetWidth / container.offsetHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.offsetWidth, container.offsetHeight);
+    });
+
+    // Animation Loop
+    function animate() {
+      controls.update();
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+    
+    // Initialize
+    updateAllFieldVisuals();
+    renderOccupiedList();
+    animate();
+  </script>
+</body>
+</html>
