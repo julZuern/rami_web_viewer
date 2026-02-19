@@ -90,7 +90,6 @@ RAMI 4.0 is a three-dimensional reference architecture model that provides a com
 
 ### File Structure
 - `RAMI_webapp.html`: Complete standalone application
-- `rami_webapp_config.json`: Configuration file (optional)
 - `README.md`: This documentation
 
 ## Usage Guide
@@ -110,14 +109,6 @@ RAMI 4.0 is a three-dimensional reference architecture model that provides a com
 4. **Manage the list** by clicking items to select them or using × to remove
 5. **Export your configuration** to save or share with collaborators
 6. **Import configurations** to load previously saved states
-
-### Best Practices
-
-- **Start with transparency adjustments** to see internal structure
-- **Use keyboard navigation** for precise field selection
-- **Export regularly** to save your work
-- **Click annotations** to understand each dimension before selecting fields
-- **Adjust camera angle** before using arrow key navigation
 
 ## Export/Import Format
 
@@ -139,10 +130,11 @@ Occupied fields are exported as JSON in the following format:
 ```
 
 This format is human-readable and can be easily edited in any text editor.
+This feature allows for storing the current occupation state.
 
 ## Use Cases
 
-- **Architecture Planning**: Model your Industry 4.0 architecture decisions
+- **Architecture Planning**: Visualize your Industry 4.0 architecture decisions
 - **Documentation**: Visual representation of system components and their relationships
 - **Communication**: Share architectural concepts with stakeholders
 - **Analysis**: Identify gaps or overlaps in system coverage
@@ -157,27 +149,13 @@ This visualization is based on the following IEC standards:
 - **IEC 61512**: Batch control (Hierarchy Levels)
 - **IEC 62890**: Life-cycle management for systems and products (Life Cycle dimension)
 
-## Limitations
-
-- Client-side only (no server required, but no persistent storage)
-- Export/import requires manual clipboard operations
-- No multi-user collaboration features
-- No undo/redo functionality (use export before major changes)
-
 ## Future Enhancements
-
 Potential improvements for future versions:
 - Local storage persistence
 - Undo/redo functionality
 - Field annotations and notes
 - Color coding by project/category
-- Connection lines between related fields
 - Export to various formats (PDF, PNG, etc.)
-- Comparison mode for different configurations
-
-## License
-
-This application is provided as-is for research and educational purposes.
 
 ## Support
 
